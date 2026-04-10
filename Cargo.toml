@@ -1,0 +1,50 @@
+[package]
+name = "h33-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["H33.ai, Inc. <support@h33.ai>"]
+description = "H33 terminal companion — sign up, mint agent tokens, run the MCP server, audit, detect classical crypto, wrap with substrate, run HICS scans, attest Bitcoin UTXOs. The canonical H33 CLI. Native Rust. Zero Node dependencies."
+license = "Proprietary"
+homepage = "https://h33.ai"
+repository = "https://github.com/H33ai-postquantum/h33-cli-rs"
+keywords = ["h33", "post-quantum", "cli", "substrate", "bitcoin"]
+categories = ["command-line-utilities", "cryptography"]
+readme = "README.md"
+
+[[bin]]
+name = "h33"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "time"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "gzip"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+clap = { version = "4.5", features = ["derive", "env"] }
+anyhow = "1.0"
+thiserror = "1.0"
+colored = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+walkdir = "2.5"
+regex = "1.10"
+sha3 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+
+# Shared token crate. `path` is used for local builds; `version` is used by
+# `cargo publish` so the published manifest references the crates.io copy.
+h33-agent-token = { path = "../h33-agent-token", version = "0.1.0" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = 3
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = "warn"
