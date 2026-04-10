@@ -1,0 +1,104 @@
+name: release
+
+# Builds signed h33 CLI binaries for the four supported platforms and uploads
+# them to the GitHub release that triggered the workflow. After the release is
+# published, the install.h33.ai S3 sync workflow picks them up so that the
+# `install.sh` STEP 3B download URL works on every platform.
+#
+# Trigger: push a tag matching `v*.*.*` (e.g. `v0.1.0`).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry / target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=target/${{ matrix.target }}/release/h33
+          test -f "$BIN" || { echo "binary missing: $BIN"; exit 1; }
+          mkdir -p dist
+          cp "$BIN" dist/h33
+          tar -czf dist/h33-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist h33
+          ( cd dist && shasum -a 256 h33-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+              > h33-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256 )
+          # install.sh STEP 3B downloads bare binaries — also stage one named
+          # h33-{linux,darwin}-{aarch64,x86_64} per the install.sh contract.
+          PLATFORM=$(echo "${{ matrix.target }}" | awk -F- '{print $3}' | sed 's/apple/darwin/;s/unknown//;s/^/h33-/')
+          ARCH=$(echo "${{ matrix.target }}" | awk -F- '{print $1}')
+          cp "$BIN" "dist/${PLATFORM}-${ARCH}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: h33-cli-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    name: publish github release
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            h33 CLI ${{ github.ref_name }}
+
+            The H33 terminal companion. Native Rust. Replaces the legacy
+            TypeScript CLI. Install via:
+
+            ```
+            cargo install h33-cli
+            brew install h33ai/tap/h33-cli
+            curl -sSL https://install.h33.ai | sh   # ships h33-cli + h33-mcp
+            ```
