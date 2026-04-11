@@ -1,6 +1,6 @@
 [package]
 name = "h33-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["H33.ai, Inc. <support@h33.ai>"]
@@ -37,6 +37,14 @@ base64 = "0.22"
 # Shared token crate. `path` is used for local builds; `version` is used by
 # `cargo publish` so the published manifest references the crates.io copy.
 h33-agent-token = { path = "../h33-agent-token", version = "0.1.0" }
+
+# Substrate response attestation verifier. Same crate the customer
+# verification docs point at, linked directly so `h33 verify <url>`
+# runs exactly the same verification logic a downstream integrator
+# would run in their own code. Enables the reqwest-support feature so
+# the CLI can extract the four X-H33-* headers from a reqwest::Response
+# in one call without manually parsing each one.
+h33-substrate-verifier = { path = "../h33-substrate-verifier", version = "0.1.0", features = ["reqwest-support"] }
 
 [profile.release]
 lto = "fat"

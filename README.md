@@ -96,7 +96,7 @@ h33 mcp
 | `h33 domains` | List your substrate attestation domains |
 | `h33 detect ./repo` | Scan a codebase for classical / quantum-vulnerable crypto |
 | `h33 wrap <file>` | Wrap a payload with the H33 substrate (74-byte commitment) |
-| `h33 verify <id>` | Verify a substrate attestation |
+| `h33 verify <id-or-url>` | Verify a substrate anchor by ID (via API) or verify an HTTP response by URL (fully local, zero network beyond the initial GET) |
 | `h33 scan ./repo` | Run an HICS code-quality scan |
 | `h33 bitcoin attest ...` | Attest a Bitcoin UTXO with three post-quantum signature families |
 | `h33 bitcoin verify <id>` | Verify a Bitcoin UTXO attestation |
@@ -104,6 +104,57 @@ h33 mcp
 | `h33 health` | Check the H33 API health endpoint |
 
 Run `h33 <command> --help` for full options.
+
+---
+
+## The `verify` command — clickable H33 substrate verification
+
+`h33 verify <target>` is the command that makes the HICS badge clickable.
+It dispatches two ways based on what you pass it:
+
+**Verify an HTTP response by URL** (fully local verification, no network
+beyond the initial GET):
+
+```bash
+h33 verify https://api.h33.ai/v1/substrate/public-keys
+```
+
+This fetches the response, parses the four `X-H33-*` attestation headers
+(`X-H33-Substrate`, `X-H33-Receipt`, `X-H33-Algorithms`, `X-H33-Substrate-Ts`),
+runs the four structural integrity checks from
+[`h33-substrate-verifier`](https://crates.io/crates/h33-substrate-verifier),
+and prints a colored per-check verdict:
+
+```
+  Attestation headers
+    ✓ X-H33-Substrate     body SHA3-256
+    ✓ X-H33-Receipt       42-byte CompactReceipt
+    ✓ X-H33-Algorithms    Dilithium + FALCON + SPHINCS+
+    ✓ X-H33-Substrate-Ts  substrate timestamp
+
+  Computed
+    body hash:     f3a8b2c1…deadbeef
+    body size:     1245 bytes
+    sig families:  Dilithium FALCON SPHINCS+
+    verify time:   1.5 µs
+
+✓ H33 substrate response attestation verified
+```
+
+All four checks are local and constant-time — tampered bodies take the
+exact same wall-clock time as good ones, so the command leaks no
+side-channel about how the check failed. The underlying library is
+[`h33-substrate-verifier`](https://crates.io/crates/h33-substrate-verifier),
+with 57 tests and `forbid(unsafe_code)`.
+
+**Verify a substrate anchor by ID** (server-side verification via API):
+
+```bash
+h33 verify sub_abc123def456
+```
+
+The dispatch is automatic: anything starting with `http://` or `https://`
+goes to the URL path; anything else is treated as an anchor ID.
 
 ---
 
