@@ -87,8 +87,11 @@ enum Commands {
     /// Run the H33 MCP server (stdio subprocess)
     Mcp,
 
-    /// Print quota, tier, and tenant info
+    /// Print quota, tier, tenant info, and active endpoints
     Status,
+
+    /// Verify environment, connectivity, auth, TLS, latency, and quota
+    Doctor,
 
     /// Show recent agent audit log entries
     Audit {
@@ -175,7 +178,8 @@ async fn main() -> anyhow::Result<()> {
             commands::mint::run(&cli.api_base, ttl, production, &user, &agent).await
         }
         Commands::Mcp => commands::mcp::run(&cli.api_base).await,
-        Commands::Status => commands::status::run(&cli.api_base).await,
+        Commands::Status => commands::status::run(&cli.api_base, &cli.auth_base).await,
+        Commands::Doctor => commands::doctor::run(&cli.api_base, &cli.auth_base).await,
         Commands::Audit { limit } => commands::audit::run(&cli.api_base, limit).await,
         Commands::Domains => commands::domains::run().await,
         Commands::Detect { path } => {

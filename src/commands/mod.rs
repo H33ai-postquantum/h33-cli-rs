@@ -3,11 +3,13 @@
 pub mod audit;
 pub mod bitcoin;
 pub mod detect;
+pub mod doctor;
 pub mod domains;
 pub mod health;
 pub mod init;
 pub mod mcp;
 pub mod mint;
+pub mod prove;
 pub mod scan;
 pub mod signup;
 pub mod status;

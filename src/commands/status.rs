@@ -1,12 +1,19 @@
-//! `h33 status` — print tenant metadata and quota.
+//! `h33 status` — print tenant metadata, quota, and active endpoints.
 
 use crate::{client::H33Client, config, output};
 use anyhow::Result;
 use colored::Colorize;
 
-pub async fn run(api_base: &str) -> Result<()> {
+pub async fn run(api_base: &str, auth_base: &str) -> Result<()> {
     let api_key = config::require_api_key()?;
     output::banner();
+
+    // ── Active endpoints ──
+    println!();
+    println!("  {}", "Endpoints".bold().underline());
+    println!("  {}  {}", "Auth Base:".bold(), auth_base.bright_black());
+    println!("  {}   {}", "API Base:".bold(), api_base.bright_black());
+    println!();
 
     let client = H33Client::new(api_base)?;
     let tenant = client.get_json("/v1/tenant", Some(&api_key)).await?;
@@ -20,7 +27,6 @@ pub async fn run(api_base: &str) -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("?");
 
-    println!();
     println!("  {} {} ({})", "Tenant:".bold(), name, id);
     println!("  {}   {}", "Tier:".bold(), tier);
     println!(
@@ -56,13 +62,12 @@ pub async fn run(api_base: &str) -> Result<()> {
 
 fn format_number(n: u64) -> String {
     let s = n.to_string();
-    let mut chars: Vec<char> = s.chars().rev().collect();
     let mut out = String::new();
-    for (i, c) in chars.iter_mut().enumerate() {
+    for (i, c) in s.chars().rev().enumerate() {
         if i > 0 && i % 3 == 0 {
             out.push(',');
         }
-        out.push(*c);
+        out.push(c);
     }
     out.chars().rev().collect()
 }
