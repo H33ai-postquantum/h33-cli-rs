@@ -200,6 +200,9 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
     output::banner();
     println!();
 
+    // Sandbox keys are managed through h33.ai (Netlify → Auth1), not api.h33.ai (Rust gateway)
+    let auth_base = if api_base == "https://api.h33.ai" { "https://h33.ai" } else { api_base };
+
     // Determine action
     let action = if rotate {
         Some("rotate".to_string())
@@ -239,7 +242,7 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
     let body = SandboxRequest { action: action.clone() };
 
     let resp = client
-        .post(join_url(api_base, SANDBOX_ENDPOINT))
+        .post(join_url(auth_base, SANDBOX_ENDPOINT))
         .header("Authorization", format!("Bearer {token}"))
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -366,6 +369,34 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
                 );
                 println!();
             }
+        }
+        Ok(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403 => {
+            // Auth rejected — key is revoked, expired, or invalid
+            println!();
+            println!(
+                "  {} Authentication failed. Your saved key may be revoked or expired.",
+                "✗".red().bold()
+            );
+            println!();
+            println!("  To fix:");
+            println!(
+                "    1. Log in at {} and copy your API key",
+                "h33.ai/dashboard".bold().underline()
+            );
+            println!(
+                "    2. Run: {}",
+                "export H33_API_KEY=<your-key>".bright_black()
+            );
+            println!(
+                "    3. Run: {}",
+                "h33 init".bold()
+            );
+            println!();
+            println!(
+                "  Or remove the stale config: {}",
+                "rm ~/.h33/config.toml".bright_black()
+            );
+            println!();
         }
         Ok(r) => {
             let status = r.status();
