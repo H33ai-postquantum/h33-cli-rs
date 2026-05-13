@@ -31,12 +31,13 @@ dirs = "5.0"
 walkdir = "2.5"
 regex = "1.10"
 sha3 = "0.10"
+hostname = "0.4"
 hex = "0.4"
 base64 = "0.22"
 
 # Shared token crate. `path` is used for local builds; `version` is used by
 # `cargo publish` so the published manifest references the crates.io copy.
-h33-agent-token = { path = "../h33-agent-token", version = "0.1.0" }
+h33-agent-token = { version = "0.1.0" }
 
 # Substrate response attestation verifier. Same crate the customer
 # verification docs point at, linked directly so `h33 verify <url>`
@@ -44,7 +45,7 @@ h33-agent-token = { path = "../h33-agent-token", version = "0.1.0" }
 # would run in their own code. Enables the reqwest-support feature so
 # the CLI can extract the four X-H33-* headers from a reqwest::Response
 # in one call without manually parsing each one.
-h33-substrate-verifier = { path = "../h33-substrate-verifier", version = "0.1.0", features = ["reqwest-support"] }
+h33-substrate-verifier = { version = "0.1.0", features = ["reqwest-support"] }
 
 [profile.release]
 lto = "fat"

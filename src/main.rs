@@ -48,6 +48,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Zero-friction setup — email, get key, scan. No browser needed.
+    Init,
+
     /// Open browser → sign up for H33, get your ck_test_* API key
     Signup,
 
@@ -152,6 +155,7 @@ enum BitcoinCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Init => commands::init::run(&cli.api_base).await,
         Commands::Signup => commands::signup::run().await,
         Commands::Mint { ttl, production, user, agent } => {
             commands::mint::run(&cli.api_base, ttl, production, &user, &agent).await

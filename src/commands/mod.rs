@@ -5,6 +5,7 @@ pub mod bitcoin;
 pub mod detect;
 pub mod domains;
 pub mod health;
+pub mod init;
 pub mod mcp;
 pub mod mint;
 pub mod scan;

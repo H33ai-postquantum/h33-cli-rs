@@ -459,6 +459,8 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "h33-agent-token"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdeff3d973c61db5991c08e4a525f1814b804b8573f150b5ee802e0588a54b3a"
 dependencies = [
  "base64",
  "hex",
@@ -481,6 +483,7 @@ dependencies = [
  "h33-agent-token",
  "h33-substrate-verifier",
  "hex",
+ "hostname",
  "regex",
  "reqwest",
  "serde",
@@ -495,6 +498,8 @@ dependencies = [
 [[package]]
 name = "h33-substrate-verifier"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1cf19d6a6239211ad61e4734ce79837c4864b108058bb097c8880fc3752a003"
 dependencies = [
  "base64",
  "hex",
@@ -534,6 +539,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
+]
+
+[[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link",
 ]
 
 [[package]]
