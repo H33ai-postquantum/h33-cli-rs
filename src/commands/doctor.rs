@@ -137,6 +137,8 @@ pub async fn run(api_base: &str, auth_base: &str) -> Result<()> {
     println!("  {}  {}", "Auth Base:".bold(), auth_base.bright_black());
     println!("  {}   {}", "API Base:".bold(), api_base.bright_black());
     println!();
+    println!("  {}", "No secrets were printed. Safe to share this output with H33 support.".bright_black());
+    println!();
 
     if failed > 0 {
         std::process::exit(1);
