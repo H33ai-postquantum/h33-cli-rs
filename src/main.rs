@@ -56,6 +56,9 @@ enum Commands {
         /// Revoke sandbox key and remove local config
         #[arg(long)]
         revoke: bool,
+        /// Create local-only test config (no API calls, clearly marked unusable)
+        #[arg(long)]
+        offline: bool,
     },
 
     /// Open browser → sign up for H33, get your ck_test_* API key
@@ -162,7 +165,7 @@ enum BitcoinCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { rotate, revoke } => commands::init::run(&cli.api_base, rotate, revoke).await,
+        Commands::Init { rotate, revoke, offline } => commands::init::run(&cli.api_base, rotate, revoke, offline).await,
         Commands::Signup => commands::signup::run().await,
         Commands::Mint { ttl, production, user, agent } => {
             commands::mint::run(&cli.api_base, ttl, production, &user, &agent).await

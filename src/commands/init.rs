@@ -145,8 +145,56 @@ fn mask_key(prefix: &str) -> String {
     }
 }
 
+/// Create a local-only offline config, clearly marked as non-API.
+fn create_offline_config() -> Result<()> {
+    let dir = config_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("config.toml");
+    let fp = &machine_fingerprint()[..16];
+    let content = format!(
+        "# H33 CLI configuration — OFFLINE / TEST MODE ONLY\n\
+         # This key does NOT authenticate against the H33 API.\n\
+         # Run `h33 init` when online to get a real sandbox key.\n\n\
+         [auth]\n\
+         api_key = \"h33_offline_{fp}\"\n\
+         account_id = \"offline\"\n\
+         environment = \"offline\"\n\n\
+         [settings]\n\
+         api_base = \"https://api.h33.ai\"\n\
+         offline = true\n"
+    );
+    std::fs::write(&path, content)?;
+
+    println!();
+    println!(
+        "  {} Offline test config created.",
+        "⚠".yellow().bold()
+    );
+    println!(
+        "  {} This key will NOT work for API calls.",
+        "⚠".yellow().bold()
+    );
+    println!(
+        "  {} Saved to {}",
+        "→".bright_black(),
+        path.display()
+    );
+    println!(
+        "  {} {} and {} will run locally only.",
+        "→".bright_black(),
+        "h33 detect".bold(),
+        "h33 scan".bold()
+    );
+    println!(
+        "  Run {} when online to get a real sandbox key.",
+        "h33 init".bold()
+    );
+    println!();
+    Ok(())
+}
+
 /// `h33 init` — create or show existing sandbox key
-pub async fn run(api_base: &str, rotate: bool, revoke: bool) -> Result<()> {
+pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> Result<()> {
     output::banner();
     println!();
 
@@ -298,32 +346,24 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool) -> Result<()> {
             println!();
         }
         Ok(r) if r.status().as_u16() == 404 => {
-            // Endpoint not deployed yet — fall back to local sandbox key
-            let local_key = format!("h33_sand_{}", &machine_fingerprint()[..16]);
-            let config_path = save_config(&local_key, "local")?;
-            std::env::set_var("H33_API_KEY", &local_key);
-
-            println!();
-            println!(
-                "  {} Sandbox key created (local mode).",
-                "✔".green().bold()
-            );
-            println!(
-                "  {} 1,000 unit hard cap applied.",
-                "✔".green().bold()
-            );
-            println!(
-                "  {} Key saved to {}",
-                "✔".green().bold(),
-                config_path.display()
-            );
-            println!();
-            println!(
-                "  {} Local mode — upgrade at {}",
-                "ℹ".bright_black(),
-                "h33.ai/pricing".underline()
-            );
-            println!();
+            if offline {
+                create_offline_config()?;
+            } else {
+                println!();
+                println!(
+                    "  {} Server does not support terminal sandbox init yet.",
+                    "✗".red().bold()
+                );
+                println!(
+                    "  Get your API key from the dashboard at {}",
+                    "h33.ai/dashboard".bold().underline()
+                );
+                println!(
+                    "  Then run: {}",
+                    "export H33_API_KEY=h33_live_...".bright_black()
+                );
+                println!();
+            }
         }
         Ok(r) => {
             let status = r.status();
@@ -331,31 +371,31 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool) -> Result<()> {
             anyhow::bail!("Sandbox key request failed (HTTP {}): {}", status, body);
         }
         Err(e) => {
-            // Network error — local fallback
-            eprintln!(
-                "  {} Network error: {}",
-                "⚠".yellow(),
-                e
-            );
-            let local_key = format!("h33_sand_{}", &machine_fingerprint()[..16]);
-            let config_path = save_config(&local_key, "local")?;
-            std::env::set_var("H33_API_KEY", &local_key);
-
-            println!();
-            println!(
-                "  {} Sandbox key created (offline mode).",
-                "✔".green().bold()
-            );
-            println!(
-                "  {} 1,000 unit hard cap applied.",
-                "✔".green().bold()
-            );
-            println!(
-                "  {} Key saved to {}",
-                "✔".green().bold(),
-                config_path.display()
-            );
-            println!();
+            if offline {
+                eprintln!(
+                    "  {} Could not reach H33 API: {}",
+                    "⚠".yellow(),
+                    e
+                );
+                create_offline_config()?;
+            } else {
+                println!();
+                println!(
+                    "  {} Could not reach H33 API.",
+                    "✗".red().bold()
+                );
+                println!(
+                    "  {} {}",
+                    "Error:".bright_black(),
+                    format!("{e}").bright_black()
+                );
+                println!();
+                println!(
+                    "  Check your network connection and try again, or use {} for local-only test mode.",
+                    "h33 init --offline".bold()
+                );
+                println!();
+            }
         }
     }
 
