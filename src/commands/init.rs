@@ -15,6 +15,7 @@
 //! - Sandbox keys do NOT count against live key tier limits
 //! - Never prints the full key except on fresh create/rotate
 
+use crate::client::join_url;
 use crate::config;
 use crate::output;
 use anyhow::{Context, Result};
@@ -103,7 +104,8 @@ fn save_config(api_key: &str, account_id: &str) -> Result<PathBuf> {
          account_id = \"{account_id}\"\n\
          environment = \"sandbox\"\n\n\
          [settings]\n\
-         api_base = \"https://api.h33.ai\"\n"
+         api_base = \"https://api.h33.ai\"\n\
+         auth_base = \"https://h33.ai\"\n"
     );
     std::fs::write(&path, content)?;
     Ok(path)
@@ -237,7 +239,7 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
     let body = SandboxRequest { action: action.clone() };
 
     let resp = client
-        .post(format!("{api_base}{SANDBOX_ENDPOINT}"))
+        .post(join_url(api_base, SANDBOX_ENDPOINT))
         .header("Authorization", format!("Bearer {token}"))
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))

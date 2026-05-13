@@ -38,9 +38,13 @@ use clap::{Parser, Subcommand};
                   Native Rust. Patent pending. SOC 2 Type II closes June 3, 2026."
 )]
 struct Cli {
-    /// H33 API base URL (default: sandbox)
-    #[arg(long, env = "H33_API_BASE", default_value = "https://sandbox.api.h33.ai", global = true)]
+    /// H33 gateway base URL (scan, verify, mint, status)
+    #[arg(long, env = "H33_API_BASE", default_value = "https://api.h33.ai", global = true)]
     api_base: String,
+
+    /// H33 auth base URL (login, keys, sandbox init)
+    #[arg(long, env = "H33_AUTH_BASE", default_value = "https://h33.ai", global = true)]
+    auth_base: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -165,7 +169,7 @@ enum BitcoinCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { rotate, revoke, offline } => commands::init::run(&cli.api_base, rotate, revoke, offline).await,
+        Commands::Init { rotate, revoke, offline } => commands::init::run(&cli.auth_base, rotate, revoke, offline).await,
         Commands::Signup => commands::signup::run().await,
         Commands::Mint { ttl, production, user, agent } => {
             commands::mint::run(&cli.api_base, ttl, production, &user, &agent).await
