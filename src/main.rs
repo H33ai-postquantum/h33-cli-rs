@@ -48,8 +48,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Zero-friction setup — email, get key, scan. No browser needed.
-    Init,
+    /// Zero-friction setup — get a sandbox key, scan. No browser needed.
+    Init {
+        /// Rotate existing sandbox key (expires old key immediately)
+        #[arg(long)]
+        rotate: bool,
+        /// Revoke sandbox key and remove local config
+        #[arg(long)]
+        revoke: bool,
+    },
 
     /// Open browser → sign up for H33, get your ck_test_* API key
     Signup,
@@ -155,7 +162,7 @@ enum BitcoinCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init => commands::init::run(&cli.api_base).await,
+        Commands::Init { rotate, revoke } => commands::init::run(&cli.api_base, rotate, revoke).await,
         Commands::Signup => commands::signup::run().await,
         Commands::Mint { ttl, production, user, agent } => {
             commands::mint::run(&cli.api_base, ttl, production, &user, &agent).await

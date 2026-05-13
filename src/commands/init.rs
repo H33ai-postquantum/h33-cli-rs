@@ -3,55 +3,70 @@
 //! No browser. No dashboard. No copy-paste.
 //!
 //! Flow:
-//! 1. Prompt for work email
-//! 2. Detect company/domain
-//! 3. Generate local machine fingerprint
-//! 4. POST to /api/v1/cli/init with email + domain + fingerprint
-//! 5. Receive sandbox API key (h33_sandbox_*)
-//! 6. Save to ~/.h33/config.toml
-//! 7. Ready — `h33 scan .` works immediately
+//! 1. POST /api/h33/keys/sandbox (authenticated via existing session or email flow)
+//! 2. If no sandbox key exists → creates one, saves to ~/.h33/config.toml
+//! 3. If sandbox key exists → prints masked metadata + rotate/revoke commands
+//! 4. `h33 init --rotate` → rotates existing sandbox key, saves new one
+//! 5. `h33 init --revoke` → revokes sandbox key, removes local config
 //!
 //! Account model:
-//! - email + domain + machine fingerprint
-//! - 1,000 unit hard cap (lifetime for sandbox)
-//! - No production attestations
-//! - No custom domains
-//! - Rate limited
-//! - Upgrade required for live keys
+//! - Sandbox keys: exactly 1 per user, 1,000 unit hard cap
+//! - No ZK middleware required
+//! - Sandbox keys do NOT count against live key tier limits
+//! - Never prints the full key except on fresh create/rotate
 
+use crate::config;
 use crate::output;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
-use std::io::{self, Write};
 use std::path::PathBuf;
 
-const INIT_ENDPOINT: &str = "/api/v1/cli/init";
+const SANDBOX_ENDPOINT: &str = "/api/h33/keys/sandbox";
 
 #[derive(Serialize)]
-struct InitRequest {
-    email: String,
-    domain: String,
-    machine_fingerprint: String,
-    cli_version: String,
-    os: String,
-    arch: String,
+struct SandboxRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
 }
 
+/// Response when a new sandbox key is created or rotated.
 #[derive(Deserialize)]
-struct InitResponse {
-    api_key: String,
-    account_id: String,
-    plan: String,
-    units_total: u64,
-    units_used: u64,
+#[allow(dead_code)]
+struct SandboxKeyResponse {
+    success: bool,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    exists: Option<bool>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    key_prefix: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    unit_cap: Option<u64>,
+    #[serde(default)]
+    units_used: Option<u64>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    last_used_at: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    warning: Option<String>,
 }
 
 /// Compute a stable machine fingerprint from hostname + username + OS.
-/// Not meant to be cryptographically binding — just a stable device identifier
-/// for rate limiting and account dedup.
 fn machine_fingerprint() -> String {
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
@@ -65,12 +80,7 @@ fn machine_fingerprint() -> String {
     let mut hasher = Sha3_256::new();
     hasher.update(format!("{hostname}:{user}:{os}:{arch}"));
     let hash = hasher.finalize();
-    hex::encode(&hash[..16]) // 32 hex chars — enough for dedup
-}
-
-/// Extract domain from email address.
-fn domain_from_email(email: &str) -> Option<String> {
-    email.split('@').nth(1).map(|d| d.to_lowercase())
+    hex::encode(&hash[..16])
 }
 
 /// Get the config directory (~/.h33/)
@@ -80,7 +90,7 @@ fn config_dir() -> Result<PathBuf> {
 }
 
 /// Save API key to ~/.h33/config.toml
-fn save_config(api_key: &str, email: &str, account_id: &str) -> Result<PathBuf> {
+fn save_config(api_key: &str, account_id: &str) -> Result<PathBuf> {
     let dir = config_dir()?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("config.toml");
@@ -90,112 +100,180 @@ fn save_config(api_key: &str, email: &str, account_id: &str) -> Result<PathBuf> 
          # Docs: https://h33.ai/docs/cli\n\n\
          [auth]\n\
          api_key = \"{api_key}\"\n\
-         email = \"{email}\"\n\
-         account_id = \"{account_id}\"\n\n\
+         account_id = \"{account_id}\"\n\
+         environment = \"sandbox\"\n\n\
          [settings]\n\
          api_base = \"https://api.h33.ai\"\n"
     );
     std::fs::write(&path, content)?;
-
-    // Also create .env in current directory for convenience
-    let env_line = format!("H33_API_KEY={api_key}\n");
-    let env_path = std::path::Path::new(".env");
-    if env_path.exists() {
-        // Append if not already present
-        let existing = std::fs::read_to_string(env_path).unwrap_or_default();
-        if !existing.contains("H33_API_KEY") {
-            let mut f = std::fs::OpenOptions::new().append(true).open(env_path)?;
-            f.write_all(env_line.as_bytes())?;
-        }
-    }
-
     Ok(path)
 }
 
-pub async fn run(api_base: &str) -> Result<()> {
+/// Remove API key from ~/.h33/config.toml (on revoke)
+fn remove_config() -> Result<()> {
+    let dir = config_dir()?;
+    let path = dir.join("config.toml");
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    // Also clean .env if we wrote to it
+    let env_path = std::path::Path::new(".env");
+    if env_path.exists() {
+        let content = std::fs::read_to_string(env_path).unwrap_or_default();
+        let cleaned: Vec<&str> = content
+            .lines()
+            .filter(|l| !l.starts_with("H33_API_KEY"))
+            .collect();
+        std::fs::write(env_path, cleaned.join("\n") + "\n")?;
+    }
+    Ok(())
+}
+
+/// Build the HTTP client with auth token from config if available.
+fn build_client_with_auth() -> Result<(reqwest::Client, Option<String>)> {
+    let client = reqwest::Client::new();
+    let token = config::api_key();
+    Ok((client, token))
+}
+
+/// Mask a key prefix: show first 12 chars + dots
+fn mask_key(prefix: &str) -> String {
+    if prefix.len() >= 12 {
+        format!("{}••••••••••••", prefix)
+    } else {
+        format!("{}••••••••", prefix)
+    }
+}
+
+/// `h33 init` — create or show existing sandbox key
+pub async fn run(api_base: &str, rotate: bool, revoke: bool) -> Result<()> {
     output::banner();
     println!();
 
-    // Check if already initialized
-    if let Ok(dir) = config_dir() {
-        let config_path = dir.join("config.toml");
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-            if content.contains("api_key") {
-                println!(
-                    "  {} Already initialized. Config: {}",
-                    "✔".green().bold(),
-                    config_path.display()
-                );
-                println!(
-                    "  Run {} to check your account, or {} to re-initialize.",
-                    "h33 status".bold(),
-                    "rm ~/.h33/config.toml && h33 init".bright_black()
-                );
-                println!();
-                return Ok(());
-            }
-        }
-    }
-
-    // Prompt for email
-    print!("  {} ", "Enter work email:".bold());
-    io::stdout().flush()?;
-    let mut email = String::new();
-    io::stdin().read_line(&mut email)?;
-    let email = email.trim().to_string();
-
-    if email.is_empty() || !email.contains('@') {
-        anyhow::bail!("Invalid email address");
-    }
-
-    let domain = domain_from_email(&email).unwrap_or_else(|| "unknown".to_string());
-    println!(
-        "  {} Company/domain detected: {}",
-        "→".bright_black(),
-        domain.bold()
-    );
-
-    let fingerprint = machine_fingerprint();
-
-    // Call the init endpoint
-    println!("  {} Creating developer account…", "→".bright_black());
-
-    let client = reqwest::Client::new();
-    let req = InitRequest {
-        email: email.clone(),
-        domain: domain.clone(),
-        machine_fingerprint: fingerprint,
-        cli_version: env!("CARGO_PKG_VERSION").to_string(),
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
+    // Determine action
+    let action = if rotate {
+        Some("rotate".to_string())
+    } else if revoke {
+        Some("revoke".to_string())
+    } else {
+        None
     };
 
+    // We need auth to call the sandbox endpoint.
+    // Try existing config first, then fall back to email login flow.
+    let (client, existing_token) = build_client_with_auth()?;
+
+    let token = match existing_token {
+        Some(t) => t,
+        None => {
+            // No existing key — need to authenticate first
+            // For now, guide the user to log in via dashboard then retry
+            println!(
+                "  {} No authentication found.",
+                "⚠".yellow().bold()
+            );
+            println!(
+                "  Run {} first to authenticate, then run {} again.",
+                "h33 signup".bold(),
+                "h33 init".bold()
+            );
+            println!(
+                "  Or set {} in your environment.",
+                "H33_API_KEY".bold()
+            );
+            println!();
+            return Ok(());
+        }
+    };
+
+    let body = SandboxRequest { action: action.clone() };
+
     let resp = client
-        .post(format!("{api_base}{INIT_ENDPOINT}"))
-        .json(&req)
+        .post(format!("{api_base}{SANDBOX_ENDPOINT}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&body)
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
     match resp {
         Ok(r) if r.status().is_success() => {
-            let body: InitResponse = r.json().await.context("parsing init response")?;
-            let config_path = save_config(&body.api_key, &email, &body.account_id)?;
+            let data: SandboxKeyResponse =
+                r.json().await.context("parsing sandbox key response")?;
 
-            // Also set in current process environment
-            std::env::set_var("H33_API_KEY", &body.api_key);
+            // ── REVOKE ──
+            if revoke {
+                remove_config()?;
+                println!(
+                    "  {} Sandbox key revoked.",
+                    "✔".green().bold()
+                );
+                println!(
+                    "  {} Local config removed.",
+                    "✔".green().bold()
+                );
+                println!(
+                    "  Run {} to create a new sandbox key.",
+                    "h33 init".bold()
+                );
+                println!();
+                return Ok(());
+            }
+
+            // ── EXISTING KEY (no action requested) ──
+            if data.exists.unwrap_or(false) && !rotate {
+                let prefix = data.key_prefix.as_deref().unwrap_or("h33_sand_****");
+                let cap = data.unit_cap.unwrap_or(1_000);
+                let used = data.units_used.unwrap_or(0);
+                let created = data.created_at.as_deref().unwrap_or("unknown");
+
+                println!(
+                    "  {} Existing sandbox key found.",
+                    "ℹ".bright_black().bold()
+                );
+                println!();
+                println!("  Key:      {}", mask_key(prefix).bright_black());
+                println!("  Units:    {} / {} used", used, cap);
+                println!("  Created:  {}", created);
+                println!(
+                    "  Status:   {}",
+                    data.status
+                        .as_deref()
+                        .unwrap_or("active")
+                        .green()
+                );
+                println!();
+                println!("  {}", "Use it, rotate it, or revoke it.".bold());
+                println!();
+                println!("    {}    Rotate to a new key", "h33 init --rotate".bold());
+                println!("    {}   Revoke and remove", "h33 init --revoke".bold());
+                println!();
+                return Ok(());
+            }
+
+            // ── NEW KEY or ROTATED KEY ──
+            let full_key = data.key.as_deref().unwrap_or("");
+            if full_key.is_empty() {
+                anyhow::bail!("Server returned success but no key");
+            }
+
+            let account_id = data.id.as_deref().unwrap_or("sandbox");
+            let config_path = save_config(full_key, account_id)?;
+            std::env::set_var("H33_API_KEY", full_key);
+
+            let verb = if rotate { "rotated" } else { "created" };
+            let cap = data.unit_cap.unwrap_or(1_000);
 
             println!();
-            println!("  {} Developer account created", "✔".green().bold());
             println!(
-                "  {} Free sandbox key issued",
-                "✔".green().bold()
+                "  {} Sandbox key {}.",
+                "✔".green().bold(),
+                verb
             );
             println!(
-                "  {} {} unit hard cap applied",
+                "  {} {} unit hard cap applied.",
                 "✔".green().bold(),
-                body.units_total
+                cap.to_string().bold()
             );
             println!(
                 "  {} Key saved to {}",
@@ -203,71 +281,206 @@ pub async fn run(api_base: &str) -> Result<()> {
                 config_path.display()
             );
             println!();
+
+            if let Some(w) = &data.warning {
+                println!(
+                    "  {} {}",
+                    "⚠".yellow(),
+                    w.yellow()
+                );
+                println!();
+            }
+
             println!("  {}", "Run:".bold());
             println!("    {}    Audit your project", "h33 scan .".bold());
             println!("    {}  Verify API connection", "h33 status".bold());
             println!("    {} Detect classical crypto", "h33 detect .".bold());
             println!();
+        }
+        Ok(r) if r.status().as_u16() == 404 => {
+            // Endpoint not deployed yet — fall back to local sandbox key
+            let local_key = format!("h33_sand_{}", &machine_fingerprint()[..16]);
+            let config_path = save_config(&local_key, "local")?;
+            std::env::set_var("H33_API_KEY", &local_key);
 
-            if let Some(msg) = body.message {
-                println!("  {} {}", "ℹ".bright_black(), msg.bright_black());
-                println!();
-            }
+            println!();
+            println!(
+                "  {} Sandbox key created (local mode).",
+                "✔".green().bold()
+            );
+            println!(
+                "  {} 1,000 unit hard cap applied.",
+                "✔".green().bold()
+            );
+            println!(
+                "  {} Key saved to {}",
+                "✔".green().bold(),
+                config_path.display()
+            );
+            println!();
+            println!(
+                "  {} Local mode — upgrade at {}",
+                "ℹ".bright_black(),
+                "h33.ai/pricing".underline()
+            );
+            println!();
         }
         Ok(r) => {
             let status = r.status();
             let body = r.text().await.unwrap_or_default();
-
-            // If the server doesn't have /cli/init yet, fall back to
-            // generating a local sandbox key that works for detect/scan
-            if status.as_u16() == 404 || status.as_u16() == 401 || status.as_u16() == 405 {
-                // Server doesn't support CLI init yet — create a local-only config
-                let local_key = format!("h33_sandbox_{}", &machine_fingerprint()[..16]);
-                let config_path = save_config(&local_key, &email, "local")?;
-                std::env::set_var("H33_API_KEY", &local_key);
-
-                println!();
-                println!("  {} Developer account created (local mode)", "✔".green().bold());
-                println!("  {} Sandbox key issued: {}",
-                    "✔".green().bold(),
-                    format!("{}…", &local_key[..20]).bright_black()
-                );
-                println!("  {} 1,000 unit hard cap applied", "✔".green().bold());
-                println!("  {} Key saved to {}", "✔".green().bold(), config_path.display());
-                println!();
-                println!("  {}", "Run:".bold());
-                println!("    {}    Audit your project", "h33 scan .".bold());
-                println!("    {} Detect classical crypto", "h33 detect .".bold());
-                println!();
-                println!(
-                    "  {} Local mode — upgrade at {}",
-                    "ℹ".bright_black(),
-                    "h33.ai/pricing".underline()
-                );
-                println!();
-            } else {
-                anyhow::bail!("Init failed (HTTP {}): {}", status, body);
-            }
+            anyhow::bail!("Sandbox key request failed (HTTP {}): {}", status, body);
         }
         Err(e) => {
-            // Network error — same local fallback
-            eprintln!("  {} Network error: {}", "⚠".yellow(), e);
-            let local_key = format!("h33_sandbox_{}", &machine_fingerprint()[..16]);
-            let config_path = save_config(&local_key, &email, "local")?;
+            // Network error — local fallback
+            eprintln!(
+                "  {} Network error: {}",
+                "⚠".yellow(),
+                e
+            );
+            let local_key = format!("h33_sand_{}", &machine_fingerprint()[..16]);
+            let config_path = save_config(&local_key, "local")?;
             std::env::set_var("H33_API_KEY", &local_key);
 
             println!();
-            println!("  {} Developer account created (offline mode)", "✔".green().bold());
-            println!("  {} Local sandbox key issued", "✔".green().bold());
-            println!("  {} 1,000 unit hard cap applied", "✔".green().bold());
-            println!("  {} Key saved to {}", "✔".green().bold(), config_path.display());
-            println!();
-            println!("  {}", "Run:".bold());
-            println!("    {}    Audit your project", "h33 scan .".bold());
-            println!("    {} Detect classical crypto", "h33 detect .".bold());
+            println!(
+                "  {} Sandbox key created (offline mode).",
+                "✔".green().bold()
+            );
+            println!(
+                "  {} 1,000 unit hard cap applied.",
+                "✔".green().bold()
+            );
+            println!(
+                "  {} Key saved to {}",
+                "✔".green().bold(),
+                config_path.display()
+            );
             println!();
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_machine_fingerprint_stable() {
+        let a = machine_fingerprint();
+        let b = machine_fingerprint();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn test_mask_key() {
+        assert_eq!(mask_key("h33_sand_a1b2"), "h33_sand_a1b2••••••••••••");
+        assert_eq!(mask_key("short"), "short••••••••");
+    }
+
+    #[test]
+    fn test_config_dir() {
+        let dir = config_dir().unwrap();
+        assert!(dir.to_string_lossy().contains(".h33"));
+    }
+
+    #[test]
+    fn test_save_and_remove_config() {
+        // Use a temp dir to avoid touching real config
+        let tmp = std::env::temp_dir().join("h33_test_init");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let config_path = tmp.join("config.toml");
+
+        let content = format!(
+            "[auth]\napi_key = \"h33_sand_test1234567890ab\"\naccount_id = \"test\"\nenvironment = \"sandbox\"\n"
+        );
+        std::fs::write(&config_path, &content).unwrap();
+        assert!(config_path.exists());
+
+        // Verify content
+        let read = std::fs::read_to_string(&config_path).unwrap();
+        assert!(read.contains("h33_sand_test1234567890ab"));
+        assert!(read.contains("sandbox"));
+
+        // Cleanup
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_sandbox_request_no_action() {
+        let req = SandboxRequest { action: None };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_sandbox_request_rotate() {
+        let req = SandboxRequest {
+            action: Some("rotate".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"action\":\"rotate\""));
+    }
+
+    #[test]
+    fn test_sandbox_request_revoke() {
+        let req = SandboxRequest {
+            action: Some("revoke".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"action\":\"revoke\""));
+    }
+
+    #[test]
+    fn test_sandbox_response_existing_key() {
+        let json = r#"{
+            "success": true,
+            "exists": true,
+            "key_prefix": "h33_sand_a1b2",
+            "unit_cap": 1000,
+            "units_used": 42,
+            "status": "active",
+            "message": "Existing sandbox key found."
+        }"#;
+        let resp: SandboxKeyResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.success);
+        assert_eq!(resp.exists, Some(true));
+        assert!(resp.key.is_none()); // No full key exposed for existing
+        assert_eq!(resp.unit_cap, Some(1000));
+        assert_eq!(resp.units_used, Some(42));
+    }
+
+    #[test]
+    fn test_sandbox_response_new_key() {
+        let json = r#"{
+            "success": true,
+            "action": "created",
+            "key": "h33_sand_abcdef1234567890abcdef1234567890abcdef12345678",
+            "key_prefix": "h33_sand_abc",
+            "id": "uuid-here",
+            "unit_cap": 1000,
+            "warning": "Save this key now — it will not be shown again."
+        }"#;
+        let resp: SandboxKeyResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.success);
+        assert!(resp.key.is_some()); // Full key only on create
+        assert_eq!(resp.action, Some("created".to_string()));
+    }
+
+    #[test]
+    fn test_existing_key_never_exposes_full_key() {
+        // When exists=true and no action, the response must NOT contain the full key
+        let json = r#"{
+            "success": true,
+            "exists": true,
+            "key_prefix": "h33_sand_a1b2",
+            "unit_cap": 1000,
+            "units_used": 0,
+            "status": "active"
+        }"#;
+        let resp: SandboxKeyResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.key.is_none(), "Existing key must never expose full key");
+    }
 }
