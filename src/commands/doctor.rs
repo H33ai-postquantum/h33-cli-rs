@@ -46,12 +46,18 @@ pub async fn run(api_base: &str, auth_base: &str) -> Result<()> {
     // ── 1. Config readable ──
     let config_check = match config::api_key() {
         Some(key) => {
-            let masked = if key.len() > 16 {
-                format!("{}...", &key[..16])
+            // Only show last 4 chars — developers paste screenshots
+            let suffix = if key.len() >= 4 { &key[key.len()-4..] } else { &key };
+            let env_label = if key.starts_with("h33_sand") || key.starts_with("h33_offline") {
+                "Sandbox"
+            } else if key.starts_with("h33_live") {
+                "Live"
+            } else if key.starts_with("h33_test") {
+                "Test"
             } else {
-                format!("{}...", &key[..key.len().min(8)])
+                "Key"
             };
-            Check::pass("Config", format!("~/.h33/config.toml — key: {masked}"))
+            Check::pass("Config", format!("{env_label} key configured (…{suffix})"))
         }
         None => Check::fail("Config", "No API key found. Run `h33 init` or set H33_API_KEY."),
     };
