@@ -93,6 +93,13 @@ enum Commands {
     /// Verify environment, connectivity, auth, TLS, latency, and quota
     Doctor,
 
+    /// Upgrade to a paid plan via Stripe
+    Upgrade {
+        /// Target tier: starter, pro, business, growth, scale
+        #[arg(long)]
+        tier: Option<String>,
+    },
+
     /// Show recent agent audit log entries
     Audit {
         /// Maximum entries to return
@@ -180,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mcp => commands::mcp::run(&cli.api_base).await,
         Commands::Status => commands::status::run(&cli.api_base, &cli.auth_base).await,
         Commands::Doctor => commands::doctor::run(&cli.api_base, &cli.auth_base).await,
+        Commands::Upgrade { tier } => commands::upgrade::run(&cli.auth_base, tier.as_deref()).await,
         Commands::Audit { limit } => commands::audit::run(&cli.api_base, limit).await,
         Commands::Domains => commands::domains::run().await,
         Commands::Detect { path } => {

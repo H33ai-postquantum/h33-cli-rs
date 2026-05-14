@@ -13,5 +13,6 @@ pub mod prove;
 pub mod scan;
 pub mod signup;
 pub mod status;
+pub mod upgrade;
 pub mod verify;
 pub mod wrap;
