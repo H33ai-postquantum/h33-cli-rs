@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 const BASELINE_PATH: &str = ".h33/baseline.json";
 
 pub async fn run(api_base: &str, path: &str, save_baseline: bool, diff: bool) -> Result<()> {
-    let token = config::require_agent_token()?;
+    // Accept API key OR agent token — API key is the primary auth for live keys
+    let token = config::agent_token()
+        .or_else(config::api_key)
+        .ok_or_else(|| anyhow::anyhow!("No API key found. Run 'h33 init' to set up your account."))?;
     output::banner();
     output::info(&format!("Running HICS scan on {}…", path));
 

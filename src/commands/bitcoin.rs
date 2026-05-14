@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 use std::fs;
 
 pub async fn attest(api_base: &str, utxo: &str, address: &str, proof_path: &str) -> Result<()> {
-    let token = config::require_agent_token()?;
+    let token = config::agent_token()
+        .or_else(config::api_key)
+        .ok_or_else(|| anyhow::anyhow!("No API key found. Run 'h33 init' to set up your account."))?;
     output::banner();
     output::info(&format!("Attesting UTXO {} (owner: {})…", utxo, address));
 

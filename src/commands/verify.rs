@@ -250,7 +250,9 @@ fn hex_short(bytes: &[u8]) -> String {
 // ─── Legacy anchor_id verification path (unchanged semantics) ────────
 
 async fn verify_anchor(api_base: &str, anchor_id: &str) -> Result<()> {
-    let token = config::require_agent_token()?;
+    let token = config::agent_token()
+        .or_else(config::api_key)
+        .ok_or_else(|| anyhow::anyhow!("No API key found. Run 'h33 init' to set up your account."))?;
     let client = H33Client::new(api_base)?;
     let body = json!({ "anchor_id": anchor_id });
     let result = client

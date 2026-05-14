@@ -10,6 +10,10 @@ use walkdir::WalkDir;
 
 const RULES_URL: &str = "https://h33.ai/detection-rules.yaml";
 
+/// Built-in detection rules, embedded at compile time as a fallback when the
+/// remote endpoint returns zero rules (or is unreachable).
+const BUILTIN_RULES: &str = include_str!("../../detection-rules.yaml");
+
 #[derive(Debug, Clone)]
 struct Rule {
     id: String,
@@ -33,16 +37,29 @@ pub async fn run(path: &str) -> Result<()> {
     output::banner();
     output::info("Fetching detection rules from h33.ai…");
 
-    let rules_text = reqwest::Client::new()
+    let remote_rules_text = match reqwest::Client::new()
         .get(RULES_URL)
         .header("User-Agent", concat!("h33-cli/", env!("CARGO_PKG_VERSION")))
         .send()
-        .await?
-        .text()
-        .await?;
+        .await
+    {
+        Ok(resp) => resp.text().await.ok(),
+        Err(_) => None,
+    };
 
-    // Minimal YAML parser — extract rule IDs, patterns, domains, and severity
-    let rules = parse_rules(&rules_text);
+    let rules = if let Some(ref text) = remote_rules_text {
+        let parsed = parse_rules(text);
+        if parsed.is_empty() {
+            output::warn("Remote returned 0 rules — using built-in detection rules");
+            parse_rules(BUILTIN_RULES)
+        } else {
+            parsed
+        }
+    } else {
+        output::warn("Could not reach h33.ai — using built-in detection rules");
+        parse_rules(BUILTIN_RULES)
+    };
+
     output::ok(&format!("Loaded {} detection rules", rules.len()));
     output::info(&format!("Scanning {}…", path));
 

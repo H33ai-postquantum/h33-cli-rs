@@ -32,6 +32,29 @@ struct SandboxRequest {
     action: Option<String>,
 }
 
+/// Postgres BIGINT comes as string through Node.js JSON — handle both.
+fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+    struct StringOrU64Visitor;
+    impl<'de> de::Visitor<'de> for StringOrU64Visitor {
+        type Value = Option<u64>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a u64 or string representing a u64")
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> { Ok(Some(v)) }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> { Ok(Some(v as u64)) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            v.parse::<u64>().map(Some).map_err(de::Error::custom)
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
+    }
+    deserializer.deserialize_any(StringOrU64Visitor)
+}
+
 /// Response when a new sandbox key is created or rotated.
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -53,7 +76,7 @@ struct SandboxKeyResponse {
     environment: Option<String>,
     #[serde(default)]
     unit_cap: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_u64")]
     units_used: Option<u64>,
     #[serde(default)]
     status: Option<String>,
@@ -133,7 +156,12 @@ fn remove_config() -> Result<()> {
 
 /// Build the HTTP client with auth token from config if available.
 fn build_client_with_auth() -> Result<(reqwest::Client, Option<String>)> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("h33-cli/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(15))
+        .no_proxy()
+        .build()
+        .context("building HTTP client")?;
     let token = config::api_key();
     Ok((client, token))
 }
@@ -200,8 +228,13 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
     output::banner();
     println!();
 
-    // Sandbox keys are managed through h33.ai (Netlify → Auth1), not api.h33.ai (Rust gateway)
-    let auth_base = if api_base == "https://api.h33.ai" { "https://h33.ai" } else { api_base };
+    // Sandbox keys are managed through Auth1 directly.
+    // The Netlify proxy at h33.ai blocks non-browser clients (WAF/Botshield).
+    let auth_base = if api_base == "https://api.h33.ai" || api_base == "https://h33.ai" {
+        "https://auth-api.z101.ai"
+    } else {
+        api_base
+    };
 
     // Determine action
     let action = if rotate {
@@ -241,8 +274,9 @@ pub async fn run(api_base: &str, rotate: bool, revoke: bool, offline: bool) -> R
 
     let body = SandboxRequest { action: action.clone() };
 
+    let url = join_url(auth_base, SANDBOX_ENDPOINT);
     let resp = client
-        .post(join_url(auth_base, SANDBOX_ENDPOINT))
+        .post(&url)
         .header("Authorization", format!("Bearer {token}"))
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))

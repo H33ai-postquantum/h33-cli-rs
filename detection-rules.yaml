@@ -1,0 +1,78 @@
+rules:
+  - id: rsa-keygen
+    pattern: "RSA|rsa_generate|RSAKeyPair|RsaPrivateKey|openssl::rsa"
+    severity: critical
+    message: "RSA key generation detected — vulnerable to Shor's algorithm"
+    recommendation: "Replace with ML-DSA-65 (FIPS 204) or ML-KEM-768 (FIPS 203)"
+
+  - id: ecdsa-signing
+    pattern: "ECDSA|ecdsa|secp256k1|secp256r1|P256|P384|SigningKey.*ecdsa"
+    severity: critical
+    message: "ECDSA signatures detected — vulnerable to quantum attack"
+    recommendation: "Replace with ML-DSA-65 (FIPS 204) three-family signing"
+
+  - id: ecdh-exchange
+    pattern: "ECDH|ecdh|X25519|x25519|DiffieHellman|key_exchange"
+    severity: critical
+    message: "ECDH key exchange detected — vulnerable to quantum attack"
+    recommendation: "Replace with ML-KEM-768 (FIPS 203)"
+
+  - id: ed25519
+    pattern: "Ed25519|ed25519|EdDSA"
+    severity: high
+    message: "Ed25519 signatures detected — will be broken by quantum computers"
+    recommendation: "Replace with ML-DSA-65 or use hybrid Ed25519+Dilithium"
+
+  - id: aes-cbc
+    pattern: "AES.?CBC|aes_cbc|CbcEncryptor|CbcDecryptor|MODE_CBC"
+    severity: medium
+    message: "AES-CBC mode detected — use AES-GCM for authenticated encryption"
+    recommendation: "Replace with AES-256-GCM"
+
+  - id: md5-hash
+    pattern: "MD5|md5|Md5::new|hashlib\\.md5"
+    severity: critical
+    message: "MD5 hash detected — cryptographically broken"
+    recommendation: "Replace with SHA3-256"
+
+  - id: sha1-hash
+    pattern: "SHA1|sha1|Sha1::new|hashlib\\.sha1"
+    severity: high
+    message: "SHA-1 hash detected — collision attacks practical"
+    recommendation: "Replace with SHA3-256 or SHA-256"
+
+  - id: des-3des
+    pattern: "DES|3DES|TripleDES|DESede|des_ede3"
+    severity: critical
+    message: "DES/3DES detected — too small key space"
+    recommendation: "Replace with AES-256-GCM"
+
+  - id: dsa-signing
+    pattern: "DSA|dsa_sign|DSAPrivateKey"
+    severity: critical
+    message: "DSA signatures detected — vulnerable to quantum attack"
+    recommendation: "Replace with ML-DSA-65 (FIPS 204)"
+
+  - id: diffie-hellman
+    pattern: "DiffieHellman|diffie.?hellman|DH_generate|DHParams"
+    severity: critical
+    message: "Diffie-Hellman key exchange detected — vulnerable to Shor's algorithm"
+    recommendation: "Replace with ML-KEM-768 (FIPS 203)"
+
+  - id: hmac-md5
+    pattern: "HMAC.?MD5|hmac_md5"
+    severity: high
+    message: "HMAC-MD5 detected — use HMAC-SHA3-256"
+    recommendation: "Replace with HMAC-SHA3-256"
+
+  - id: pkcs1-padding
+    pattern: "PKCS1v15|pkcs1|PKCS1_v1_5"
+    severity: high
+    message: "PKCS#1 v1.5 padding detected — vulnerable to Bleichenbacher attack"
+    recommendation: "Replace with OAEP or post-quantum encryption"
+
+  - id: weak-random
+    pattern: "Math\\.random|random\\.random|rand\\(\\)|srand"
+    severity: high
+    message: "Weak random number generator detected"
+    recommendation: "Use CSPRNG (getrandom, OsRng, crypto.getRandomValues)"
